@@ -3,6 +3,7 @@ import requests
 import pickle
 import pandas as pd
 import matplotlib.pyplot as plt
+from datetime import datetime, timedelta
 
 # Load configuration from pickle file
 config = pickle.load(open(r'.\pkls\config.pkl', 'rb'))
@@ -37,6 +38,8 @@ def get_videos_by_query_tubular(proxies, query, date_range):
             "duration"
         ],
         "sort": {
+            "sort": "views_gain",
+            "sort_reverse": True,
             "sort_date_range": {
                 "min": date_range['min'],
                 "max": date_range['max']
@@ -50,18 +53,19 @@ def get_videos_by_query_tubular(proxies, query, date_range):
         raise Exception(f"API request failed with status code {response.status_code}: {response.text}")
 
     response_json = response.json()
-
+    print(response_json)
     if 'videos' in response_json and len(response_json['videos']) > 0:
         return response_json['videos']
     else:
         raise Exception("No videos found for the given query")
 
 # Define date ranges
+today = datetime.today()
 date_ranges = {
-    '7 days': {'min': '2024-05-21', 'max': '2024-05-28'},
-    '14 days': {'min': '2024-05-14', 'max': '2024-05-28'},
-    '1 month': {'min': '2024-04-28', 'max': '2024-05-28'},
-    'YTD': {'min': '2024-01-01', 'max': '2024-05-28'},
+    '7 days': {'min': (today - timedelta(days=7)).strftime('%Y-%m-%d'), 'max': today.strftime('%Y-%m-%d')},
+    '14 days': {'min': (today - timedelta(days=14)).strftime('%Y-%m-%d'), 'max': today.strftime('%Y-%m-%d')},
+    '1 month': {'min': (today - timedelta(days=30)).strftime('%Y-%m-%d'), 'max': today.strftime('%Y-%m-%d')},
+    'YTD': {'min': f'{today.year}-01-01', 'max': today.strftime('%Y-%m-%d')},
 }
 
 # Streamlit app
@@ -97,7 +101,7 @@ else:
     date_range = date_ranges['7 days']  # Default selection
 
 # Query input
-query = st.text_input('Search Query', 'ronaldo')
+query = st.text_input('Search Query', 'navalha')
 
 # Video type selection
 st.subheader('Select Video Types')
@@ -140,18 +144,23 @@ if videos:
             filtered_videos.append(video)
     videos = filtered_videos
 
-# Plotting the views over time
+# Plotting the stacked line chart for views over time
 if videos:
     st.subheader('Views Over Time')
     views_data = pd.DataFrame(videos)
     views_data['publish_date'] = pd.to_datetime(views_data['publish_date'])
-    views_data.sort_values('publish_date', inplace=True)
+    views_data = views_data.sort_values('publish_date')
+
+    views_data['video_type'] = views_data.apply(
+        lambda x: 'short' if x['duration'] < 62 else ('livestream' if x['video_was_live'] else 'video'), axis=1)
+
+    pivot_table = views_data.pivot_table(index='publish_date', columns='video_type', values='views_gain', aggfunc='sum').fillna(0)
 
     fig, ax = plt.subplots()
-    ax.plot(views_data['publish_date'], views_data['views'], marker='o')
+    pivot_table.plot(kind='area', stacked=True, ax=ax)
     ax.set_xlabel('Publish Date')
-    ax.set_ylabel('Views')
-    ax.set_title('Views Over Time')
+    ax.set_ylabel('Views gain')
+    ax.set_title('Stacked Line Chart of Views Over Time')
     plt.xticks(rotation=45)
     st.pyplot(fig)
 
