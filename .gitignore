@@ -1,0 +1,4 @@
+temp/
+pkls/*
+__pycache__
+chromeProfile
