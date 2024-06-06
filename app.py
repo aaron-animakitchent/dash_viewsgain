@@ -100,6 +100,7 @@ st.markdown(
 )
 
 st.title('Video Query App')
+st.divider()
 
 # Selección de rango de fechas
 st.subheader('Select Date Range')
@@ -129,6 +130,7 @@ elif range_ytd:
     date_range = date_ranges['YTD']
 else:
     date_range = date_ranges['7 days']  # Selección predeterminada
+st.divider()
 
 # Entrada de consulta
 query = st.text_input('Search Query', '')
@@ -155,6 +157,7 @@ with col3:
 with col4:
     if st.checkbox('All'):
         video_types = []  # Restablecer a vacío para incluir todos los tipos si se selecciona 'All'
+st.divider()
 
 # Botón para iniciar la búsqueda
 if st.button('Search Videos'):
