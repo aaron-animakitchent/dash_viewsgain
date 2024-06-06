@@ -5,26 +5,41 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 
-# Load configuration from pickle file
+
+st. set_page_config(layout="wide")
+# Cargar configuración desde un archivo pickle
 config = pickle.load(open(r'.\pkls\config.pkl', 'rb'))
 api_key_tub = config['api_key_tub']
 proxies = config['proxies']
 
-# Initialize session_state for view_count if not exists
-if 'view_count' not in st.session_state:
-    st.session_state['view_count'] = None
+# Inicializar session_state para manejar múltiples consultas
+if 'queries' not in st.session_state:
+    st.session_state['queries'] = []
+if 'results' not in st.session_state:
+    st.session_state['results'] = {}
 
-# Function to get videos based on the query
-def get_videos_by_query_tubular(proxies, query, date_range):
+# Función para obtener videos basados en la consulta
+@st.cache
+def get_videos_by_query_tubular(api_key, proxies, query, date_range, video_types):
     headers = {
-        'Api-Key': api_key_tub,
+        'Api-Key': api_key,
     }
+
+    include_filter = {
+        "search": query
+    }
+
+    if 'short' in video_types:
+        include_filter["video_duration"] = {"max": 61}
+    elif 'video' in video_types:
+        include_filter["video_duration"] = {"min": 62}
+
+    if 'livestream' in video_types:
+        include_filter["video_was_live"] = True
 
     data = {
         "query": {
-            "include_filter": {
-                "search": query
-            }
+            "include_filter": include_filter
         },
         "fields": [
             "views",
@@ -53,13 +68,12 @@ def get_videos_by_query_tubular(proxies, query, date_range):
         raise Exception(f"API request failed with status code {response.status_code}: {response.text}")
 
     response_json = response.json()
-    print(response_json)
     if 'videos' in response_json and len(response_json['videos']) > 0:
         return response_json['videos']
     else:
         raise Exception("No videos found for the given query")
 
-# Define date ranges
+# Definir rangos de fechas
 today = datetime.today()
 date_ranges = {
     '7 days': {'min': (today - timedelta(days=7)).strftime('%Y-%m-%d'), 'max': today.strftime('%Y-%m-%d')},
@@ -68,10 +82,26 @@ date_ranges = {
     'YTD': {'min': f'{today.year}-01-01', 'max': today.strftime('%Y-%m-%d')},
 }
 
-# Streamlit app
+# Aplicación de Streamlit
+st.markdown(
+    """
+    <style>
+        .reportview-container .main .block-container {
+            padding-left: 1rem;
+            padding-right: 1rem;
+        }
+        .reportview-container .main {
+            max-width: 200%;
+            padding: 0;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
 st.title('Video Query App')
 
-# Date range selection
+# Selección de rango de fechas
 st.subheader('Select Date Range')
 col1, col2, col3, col4, col5 = st.columns(5)
 with col1:
@@ -98,12 +128,18 @@ elif range_1_month:
 elif range_ytd:
     date_range = date_ranges['YTD']
 else:
-    date_range = date_ranges['7 days']  # Default selection
+    date_range = date_ranges['7 days']  # Selección predeterminada
 
-# Query input
-query = st.text_input('Search Query', 'navalha')
+# Entrada de consulta
+query = st.text_input('Search Query', '')
 
-# Video type selection
+# Añadir consulta a la lista
+if st.button('Add Query'):
+    if query:
+        st.session_state['queries'].append(query)
+
+
+# Selección de tipos de video
 st.subheader('Select Video Types')
 col1, col2, col3, col4 = st.columns(4)
 video_types = []
@@ -118,59 +154,55 @@ with col3:
         video_types.append('livestream')
 with col4:
     if st.checkbox('All'):
-        video_types = []  # Reset to empty to include all types if 'All' is selected
+        video_types = []  # Restablecer a vacío para incluir todos los tipos si se selecciona 'All'
 
-# Fetch and display videos
-st.subheader('Videos')
-try:
-    videos = get_videos_by_query_tubular(proxies, query, date_range)
-except Exception as e:
-    st.error(f"Error: {str(e)}")
-    videos = []
+# Botón para iniciar la búsqueda
+if st.button('Search Videos'):
+    st.session_state['results'] = {}
+    for q in st.session_state['queries']:
+        try:
+            videos = get_videos_by_query_tubular(api_key_tub, proxies, q, date_range, video_types)
+            st.session_state['results'][q] = videos
+        except Exception as e:
+            st.error(f"Error for query '{q}': {str(e)}")
 
-# Filter videos based on selected types
-if videos:
-    filtered_videos = []
-    for video in videos:
-        is_short = video['duration'] < 62
-        is_live = video['video_was_live']
-        if 'short' in video_types and is_short:
-            filtered_videos.append(video)
-        elif 'livestream' in video_types and is_live:
-            filtered_videos.append(video)
-        elif 'video' in video_types and not (is_short or is_live):
-            filtered_videos.append(video)
-        elif not video_types:
-            filtered_videos.append(video)
-    videos = filtered_videos
+# Mostrar las consultas añadidas
+st.subheader('Added Queries')
+st.write(', '.join(st.session_state['queries']))
 
-# Plotting the stacked line chart for views over time
-if videos:
-    st.subheader('Views Over Time')
-    views_data = pd.DataFrame(videos)
-    views_data['publish_date'] = pd.to_datetime(views_data['publish_date'])
-    views_data = views_data.sort_values('publish_date')
+# Comparar y mostrar los resultados
+if st.session_state['results']:
+    st.subheader('Comparison Results')
 
-    views_data['video_type'] = views_data.apply(
-        lambda x: 'short' if x['duration'] < 62 else ('livestream' if x['video_was_live'] else 'video'), axis=1)
+    queries = list(st.session_state['results'].keys())
+    columns = st.columns(len(queries))
 
-    pivot_table = views_data.pivot_table(index='publish_date', columns='video_type', values='views_gain', aggfunc='sum').fillna(0)
+    for idx, query in enumerate(queries):
+        with columns[idx]:
+            st.subheader(f'Results for "{query}"')
+            videos = st.session_state['results'][query]
+            views_data = pd.DataFrame(videos)
+            views_data['publish_date'] = pd.to_datetime(views_data['publish_date'])
+            views_data = views_data.sort_values('publish_date')
 
-    fig, ax = plt.subplots()
-    pivot_table.plot(kind='area', stacked=True, ax=ax)
-    ax.set_xlabel('Publish Date')
-    ax.set_ylabel('Views gain')
-    ax.set_title('Stacked Line Chart of Views Over Time')
-    plt.xticks(rotation=45)
-    st.pyplot(fig)
+            # Filtrar datos de vistas según el rango de fechas seleccionado
+            views_data = views_data[(views_data['publish_date'] >= date_range['min']) & (views_data['publish_date'] <= date_range['max'])]
 
-    # Display videos in a table format
-    st.subheader('Videos')
-    for _, video in views_data.iterrows():
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col1:
-            st.image(video['thumbnail_url'], width=100)
-        with col2:
-            st.write(f"**{video['video_id']}** - {video['title']}")
-        with col3:
-            st.write(f"[Watch Video]({video['video_url']})")
+            views_data['video_type'] = views_data.apply(
+                lambda x: 'short' if x['duration'] < 62 else ('livestream' if x['video_was_live'] else 'video'), axis=1)
+
+            pivot_table = views_data.pivot_table(index='publish_date', columns='video_type', values='views_gain', aggfunc='sum').fillna(0)
+
+            fig, ax = plt.subplots()
+            pivot_table.plot(kind='area', stacked=True, ax=ax)
+            ax.set_xlabel('Date')
+            ax.set_ylabel('Views Gain')
+            ax.set_title(f'Views Over Time for "{query}"')
+            plt.xticks(rotation=45)
+            st.pyplot(fig)
+
+            st.subheader(f'Videos for "{query}"')
+            for _, video in views_data.iterrows():
+                st.image(video['thumbnail_url'], width=100)
+                st.write(f"{video['video_id']['id']} - {video['title']}")
+                st.write(f"[Watch Video]({video['video_url']})")
