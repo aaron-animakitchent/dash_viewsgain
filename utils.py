@@ -52,7 +52,7 @@ def build_payload_video_details(video_id):
 
 # Función para hacer la solicitud a la API (POST)
 def fetch_data_post(url, payload):
-    headers = {'Api-Key': '62668-1eb4755a6e2b8cbcce6cd3b4a1107b18'}
+    headers = {'Api-Key': ''}
     response = requests.post(url, headers=headers, json=payload)
     response.raise_for_status()
     logger.info(f'Datos obtenidos de la API: {response.json()}')
