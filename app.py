@@ -5,8 +5,10 @@ import logging
 from utils import build_payload_search, build_payload_video_details, fetch_data_post, trends_response_to_dataframe, video_details_response_to_dataframe, set_date_range, categorize_video
 
 # Configuración del logger
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message=s')
+logging.basicConfig(level=logging.INFO, format='%(asctime=s - %(levelname=s - %(message=s')
 logger = logging.getLogger(__name__)
+
+st.set_page_config(layout="wide")
 
 @st.cache_data
 def fetch_combined_data(search, min_date, max_date):
@@ -120,7 +122,16 @@ else:
 # Inicializar la lista de términos de búsqueda en el estado de la sesión
 if 'search_terms' not in st.session_state:
     st.session_state.search_terms = []
-
+if 'comparison_searches' not in st.session_state:
+    st.session_state.comparison_searches = []
+    
+# Selección de granularidad
+st.write("### Seleccione la granularidad de los datos:")
+granularity_option = st.selectbox(
+    "",
+    ('Día', 'Semana', 'Mes', 'Año'),
+    index=0
+)
 # Entrada de búsqueda
 st.write("### Búsqueda")
 search = st.text_input('Buscar')
@@ -129,13 +140,50 @@ search = st.text_input('Buscar')
 if st.button('Añadir a la búsqueda'):
     if search:
         st.session_state.search_terms.append(search)
-        st.write(f"Términos de búsqueda actuales: {' OR '.join(st.session_state.search_terms)}")
+        st.experimental_rerun()
+
+# Botón para añadir a la comparación
+if st.button('Añadir a la comparación'):
+    if st.session_state.search_terms:
+        st.session_state.comparison_searches.append(' OR '.join(st.session_state.search_terms))
+        st.session_state.search_terms = []
+        st.experimental_rerun()
 
 # Mostrar términos de búsqueda actuales
 if st.session_state.search_terms:
-    st.write(f"Términos de búsqueda actuales: {' OR '.join(st.session_state.search_terms)}")
+    st.write(f"Términos de búsqueda actuales: {' , '.join(st.session_state.search_terms)}")
+
+# Mostrar términos de comparación actuales
+if st.session_state.comparison_searches:
+    st.write(f"Búsquedas para comparar: {', '.join(st.session_state.comparison_searches)}")
 
 st.divider()
+
+
+
+def process_data_for_plotting(df_combined, granularity_option, selected_video_types):
+    # Filtrar por tipo de video
+    df_filtered = df_combined[df_combined['tipo_video'].isin(selected_video_types)]
+    logger.info(f'DataFrame filtrado por tipo de video: {df_filtered.head()}')
+
+    # Agrupar datos según la granularidad seleccionada
+    if granularity_option == 'Día':
+        df_filtered['granularity'] = df_filtered['date'].dt.to_period('D').dt.start_time
+    elif granularity_option == 'Semana':
+        df_filtered['granularity'] = df_filtered['date'].dt.to_period('W').apply(lambda r: f"W{r.week} {r.start_time.year}")
+    elif granularity_option == 'Mes':
+        df_filtered['granularity'] = df_filtered['date'].dt.to_period('M').dt.start_time
+    elif granularity_option == 'Año':
+        df_filtered['granularity'] = df_filtered['date'].dt.to_period('Y').dt.start_time
+
+    # Agrupar y graficar las visualizaciones frente a la fecha por tipo de video
+    df_grouped = df_filtered.groupby(['granularity', 'tipo_video'])['views'].sum().reset_index()
+    if granularity_option == 'Semana':
+        df_grouped['granularity'] = pd.Categorical(df_grouped['granularity'], ordered=True, categories=sorted(df_grouped['granularity'].unique(), key=lambda x: (int(x.split()[1]), int(x.split()[0][1:]))))
+    df_pivot = df_grouped.pivot(index='granularity', columns='tipo_video', values='views').fillna(0)
+    df_pivot = df_pivot.sort_index()
+
+    return df_pivot
 
 # Botón de búsqueda principal
 if st.button('Buscar', key='buscar'):
@@ -147,23 +195,26 @@ if st.button('Buscar', key='buscar'):
             # Almacenar el DataFrame combinado en el estado de la sesión
             st.session_state.df_combined = df_combined
 
-            # Filtrar por tipo de video
-            df_filtered = df_combined[df_combined['tipo_video'].isin(selected_video_types)]
-            logger.info(f'DataFrame filtrado por tipo de video: {df_filtered.head()}')
+            # Procesar datos para la gráfica
+            df_pivot = process_data_for_plotting(df_combined, granularity_option, selected_video_types)
 
-            # Agrupar y graficar las visualizaciones frente a la fecha por tipo de video
-            st.write("### Gráfico de ganancias de visualizaciones frente a la fecha por tipo de video (apilado):")
-            df_grouped = df_filtered.groupby(['date', 'tipo_video']).sum().reset_index()
-            df_pivot = df_grouped.pivot(index='date', columns='tipo_video', values='views').fillna(0)
-            df_pivot = df_pivot.sort_index()
+            # Ajustar los límites del eje x para que solo se muestren datos disponibles
+            min_date = df_pivot.index[0]
+            max_date = df_pivot.index[-1]
 
             plt.figure(figsize=(10, 6))
             plt.stackplot(df_pivot.index, df_pivot.T, labels=df_pivot.columns)
             plt.legend(loc='upper left')
             plt.xlabel('Fecha')
             plt.ylabel('Ganancias de Visualizaciones')
-            plt.title('Ganancias de Visualizaciones a lo Largo del Tiempo por Tipo de Video (Apilado)')
-            plt.xticks(rotation=45)
+            plt.title(f'Ganancias de Visualizaciones a lo Largo del Tiempo por Tipo de Video (Apilado) - Granularidad: {granularity_option}')
+            plt.xlim(min_date, max_date)
+            if granularity_option == 'Semana':
+                plt.xticks(rotation=45, ha='right')
+                plt.gca().set_xticks(range(len(df_pivot.index)))
+                plt.gca().set_xticklabels(df_pivot.index, rotation=45, ha='right')
+            else:
+                plt.xticks(rotation=45)
             st.pyplot(plt)
 
             st.divider()
@@ -187,6 +238,75 @@ if st.button('Buscar', key='buscar'):
         except Exception as e:
             logger.error(f"Error obteniendo datos: {e}")
             st.error(f"Error obteniendo datos: {e}")
+
+# Botón de comparación
+if st.button('Comparar'):
+    if st.session_state.comparison_searches:
+        with st.spinner('Obteniendo datos de la API...'):
+            comparison_data = []
+            try:
+                for search in st.session_state.comparison_searches:
+                    df_combined = fetch_combined_data(search, min_date, max_date)
+                    comparison_data.append((search, df_combined))
+
+                st.session_state.comparison_data = comparison_data
+                st.session_state.comparison_searches = []
+                st.experimental_rerun()
+
+            except Exception as e:
+                logger.error(f"Error obteniendo datos: {e}")
+                st.error(f"Error obteniendo datos: {e}")
+
+# Mostrar comparación de resultados
+if 'comparison_data' in st.session_state and st.session_state.comparison_data:
+    st.write("### Comparación de Resultados:")
+    comparison_data = st.session_state.comparison_data
+
+    # Crear columnas para cada comparación
+    cols = st.columns(len(comparison_data))
+    for col, (search, df_combined) in zip(cols, comparison_data):
+        with col:
+            st.write(f"{search}")
+
+            # Procesar datos para la gráfica
+            df_pivot = process_data_for_plotting(df_combined, granularity_option, selected_video_types)
+
+            # Ajustar los límites del eje x para que solo se muestren datos disponibles
+            min_date = df_pivot.index[0]
+            max_date = df_pivot.index[-1]
+
+            plt.figure(figsize=(10, 6))
+            plt.stackplot(df_pivot.index, df_pivot.T, labels=df_pivot.columns)
+            plt.legend(loc='upper left')
+            plt.xlabel('Fecha')
+            plt.ylabel('Ganancias de Visualizaciones')
+            plt.title(f'Ganancias de Visualizaciones a lo Largo del Tiempo por Tipo de Video (Apilado) - Granularidad: {granularity_option}')
+            plt.xlim(min_date, max_date)
+            if granularity_option == 'Semana':
+                plt.xticks(rotation=45, ha='right')
+                plt.gca().set_xticks(range(len(df_pivot.index)))
+                plt.gca().set_xticklabels(df_pivot.index, rotation=45, ha='right')
+            else:
+                plt.xticks(rotation=45)
+            st.pyplot(plt)
+
+            st.divider()
+
+            # Crear DataFrame intermedio para mostrar detalles de los videos
+            df_unique_videos = df_combined[['video_id', 'title', 'thumbnail_url', 'video_url']].drop_duplicates(subset=['video_id'])
+
+            # Mostrar detalles de videos
+            st.write("### Detalles de Videos:")
+            for idx, row in df_unique_videos.iterrows():
+                cols_videos = st.columns(3)
+                with cols_videos[0]:
+                    st.image(row['thumbnail_url'], width=120)
+                with cols_videos[1]:
+                    st.write(f"{row['video_id']} - {row['title']}")
+                with cols_videos[2]:
+                    st.write(f"[Ver Video]({row['video_url']})")
+
+            st.divider()
 
 # Mostrar DataFrame combinado, oculto por defecto
 if 'df_combined' in st.session_state:

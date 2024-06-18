@@ -93,7 +93,7 @@ def video_details_response_to_dataframe(response):
 
 # Función para establecer el rango de fechas
 def set_date_range(option):
-    today = datetime.now()
+    today = datetime.now() - timedelta(days=1)  # Restar un día adicional
     if option == 'Últimos 7 días':
         return today - timedelta(days=7), today
     elif option == 'Últimos 14 días':
